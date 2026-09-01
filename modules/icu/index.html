@@ -187,6 +187,9 @@ table.mini input{padding:6px 7px;font-size:16px;}
       <option value="caveat">Caveat</option>
     </select>
   </div>
+  <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-soft);font-weight:600;margin-top:6px;flex-wrap:wrap;">
+    <label style="display:flex;align-items:center;gap:6px;margin:0;"><input type="checkbox" id="condensedToggle" onchange="CONDENSED_MODE=this.checked;" style="width:16px;height:16px;margin:0;"> \ud83d\udcc4 Condensed format (dense single-column table \u2014 fewer printed pages; applies to Print/PDF and Word)</label>
+  </div>
   <button class="mp-done" onclick="toggleMarginPanel()">Done</button>
 </div>
 
@@ -816,7 +819,7 @@ function sec_plan(){
     <div class="note">Nutrition timing, stress-ulcer and sepsis principles updated to current ATS/ESICM, ESPEN/ASPEN, Surviving Sepsis Campaign and CHEST guidance; Swan-Ganz/PAC removed as a routine order since routine PAC use is no longer supported by outcome data.</div>
   </div>
   <div class="card">
-    <h2><span class="idx">U1</span> Antibiotics <span style="font-weight:400;font-size:11px;color:var(--ink-soft)">(select agent(s) — dose auto-adjusts to CrCl from Sec. O)</span></h2>
+    <h2 style="display:flex;justify-content:space-between;align-items:center;"><span><span class="idx">U1</span> Antibiotics <span style="font-weight:400;font-size:11px;color:var(--ink-soft)">(select agent(s) — dose auto-adjusts to CrCl from Sec. O)</span></span><span onclick="clearAllAbx()" style="cursor:pointer;font-weight:700;font-size:12px;color:var(--red);border-bottom:none;">Clear all</span></h2>
     <div id="abxListBox"></div>
     <div class="field" style="margin-top:8px;"><label>Other antibiotic / not listed above</label><textarea id="pl_abx_other"></textarea></div>
     <div class="flag">Reference doses only — verify against local antibiogram/pharmacy before prescribing.</div>
@@ -848,6 +851,15 @@ function toggleAbx(id){
   if(selectedAbx.has(id)) selectedAbx.delete(id); else selectedAbx.add(id);
   renderAbxList();
   updateProgress();
+}
+function clearAllAbx(){
+  if(!selectedAbx.size) return;
+  if(!confirm('Clear all selected antibiotics for this patient?')) return;
+  selectedAbx = new Set();
+  renderAbxList();
+  updateProgress();
+  if (icuAutoSave) icuAutoSave.save && icuAutoSave.save();
+  showToast('Antibiotic selections cleared');
 }
 function renderAbxList(){
   const box = document.getElementById('abxListBox');
@@ -1123,13 +1135,19 @@ function buildSBARAuto(){
   const oxy = getChipValue('oxy', false);
   const pressor = getChipValue('pressor', false);
   const plan = val('pl_other');
+  const glucoseTarget = val('pl_glucose');
+  const pmSections = [['NeuroSedation','Neuro/Sedation'],['RenalFluid','Renal/Fluid'],['GINutrition','GI/Nutrition'],['Infection','Infection'],['SkinMobility','Skin/Mobility']];
+  const planParts = [];
+  if(glucoseTarget) planParts.push('Glycemic target '+glucoseTarget);
+  pmSections.forEach(function(s){ const vals = getChipValue(s[0], true); if(vals.length) planParts.push(s[1]+': '+vals.join(', ')); });
+  if(plan) planParts.push(plan);
   const goals = getChipValue('goals', false);
 
   const who = [age?age+'-year-old':'', sex].filter(Boolean).join(' ');
   const situation = `${who||'Patient'}${name?' ('+name+')':''} admitted with ${dx||'[primary diagnosis not yet entered]'}.`;
   const background = `PMH: ${pmh||'none documented'}.${hpi?' HPI: '+hpi+'.':''}${secondary?' Comorbidities: '+secondary+'.':''}`;
   const assessment = `SOFA ${sofa||'—'}, APACHE II ${apache||'—'}, qSOFA ${qsofa||'—'}, GCS ${gcs||'—'}. Airway: ${airway||'not documented'}; respiratory support: ${oxy||'not documented'}.${(pressor&&pressor!=='None')?' On '+pressor+'.':''}${examFindings?' Exam findings: '+examFindings+'.':''}`;
-  const recommendation = `${plan||'[management plan not yet entered]'}${goals?' Goals of care: '+goals+'.':''}`;
+  const recommendation = `${planParts.length?planParts.join('. ')+'.':'[management plan not yet entered]'}${goals?' Goals of care: '+goals+'.':''}`;
   return {situation, background, assessment, recommendation};
 }
 function autofillSBAR(){
@@ -1976,12 +1994,17 @@ function generateNoteHTML(){
   }
 
   let blocks = '';
+  const rowHTML = (l,v) => CONDENSED_MODE
+    ? `<tr><td class="cl">${esc(l)}</td><td class="cv">${esc(v)}</td></tr>`
+    : `<span><b>${esc(l)}:</b> ${esc(v)}</span>`;
   SECTION_ORDER.forEach(sec=>{
     const rows = by[sec];
     if(!rows || !rows.length) return;
     const isFull = sec.endsWith('__full');
     const title = SECTION_TITLES[sec] || sec;
-    if(isFull){
+    if(CONDENSED_MODE){
+      blocks += `<div class="pblock${isFull?' full':''}"><h3>${esc(title)}</h3><table class="ctab">${rows.map(([l,v])=>rowHTML(l,v)).join('')}</table></div>`;
+    } else if(isFull){
       blocks += `<div class="pblock full"><h3>${esc(title)}</h3>${rows.map(([l,v])=>`<p><b>${esc(l)}:</b> ${esc(v)}</p>`).join('')}</div>`;
     } else {
       blocks += `<div class="pblock"><h3>${esc(title)}</h3><div class="kv">${rows.map(([l,v])=>`<span><b>${esc(l)}:</b> ${esc(v)}</span>`).join('')}</div></div>`;
@@ -1990,7 +2013,9 @@ function generateNoteHTML(){
 
   let scoreBlock = '';
   if(Object.keys(scores).length){
-    scoreBlock = `<div class="pblock"><h3>Severity Scores</h3><div class="kv">${Object.entries(scores).map(([l,v])=>`<span><b>${esc(l)}:</b> ${esc(v)}</span>`).join('')}</div></div>`;
+    scoreBlock = CONDENSED_MODE
+      ? `<div class="pblock"><h3>Severity Scores</h3><table class="ctab">${Object.entries(scores).map(([l,v])=>rowHTML(l,v)).join('')}</table></div>`
+      : `<div class="pblock"><h3>Severity Scores</h3><div class="kv">${Object.entries(scores).map(([l,v])=>`<span><b>${esc(l)}:</b> ${esc(v)}</span>`).join('')}</div></div>`;
   }
 
   let bundleBlock = '';
@@ -2044,11 +2069,20 @@ function generateNoteHTML(){
     .kv b{color:#333;}
     p{margin:2px 0 4px;}
     @media print{ body{padding:0;} }
+    body.condensed{font-size:7.6pt;line-height:1.18;}
+    body.condensed .hdr{padding-bottom:3px;margin:0 0 5px;}
+    body.condensed .hdr h1{font-size:12pt;}
+    body.condensed h3{font-size:7.4pt;margin:0 0 1px;}
+    body.condensed .pblock{margin-bottom:3px;padding-bottom:2px;}
+    body.condensed .ctab{width:100%;border-collapse:collapse;}
+    body.condensed .ctab td{padding:0 4px 0 0;vertical-align:top;white-space:normal;}
+    body.condensed .ctab td.cl{font-weight:700;color:#333;white-space:nowrap;padding-right:4px;}
+    body.condensed .status-banner{padding:3px 6px;margin:0 0 4px;font-size:8pt;}
   </style></head>
-  <body>
+  <body class="${CONDENSED_MODE?'condensed':''}">
     <div class="hdr">
       <h1>ICU Admission Note — ${esc(name)}${mrn?(' &middot; MRN '+esc(mrn)):''}</h1>
-      <div class="meta">Generated ${esc(now)} &middot; ICU Admission Suite</div>
+      <div class="meta">Generated ${esc(now)} &middot; ICU Admission Suite${CONDENSED_MODE?' &middot; Condensed format':''}</div>
     </div>
     <div class="wrap">${statusBanner}${outstandingBlock}${blocks}${scoreBlock}${medReconBlock}${bundleBlock}${trajectBlock}${reassessBlock}</div>
   </body></html>`;
@@ -2058,6 +2092,7 @@ function generateNoteHTML(){
 const PRINT_MARGINS = {top:65, right:12, bottom:12, left:12};
 let HW_STYLE = false;
 let HW_FONT_CHOICE = 'kalam';
+let CONDENSED_MODE = false;
 function getHwFontLink(){
   const fonts = window.ClinicalCalc ? ClinicalCalc.HW_FONTS : {kalam:{googleParam:'Kalam:wght@400;700'},caveat:{googleParam:'Caveat:wght@500;700'}};
   const cfg = fonts[HW_FONT_CHOICE] || fonts.kalam;

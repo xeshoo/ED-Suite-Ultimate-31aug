@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ed-suite-v13';
+const CACHE_NAME = 'ed-suite-v15';
 const ASSETS = [
   './',
   './index.html',
